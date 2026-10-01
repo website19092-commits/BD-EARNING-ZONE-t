@@ -271,7 +271,6 @@ header{position:sticky;top:0;z-index:100;padding:15px 16px 12px;background:rgba(
 .count-ring .fgc{stroke:var(--green);stroke-linecap:round;transition:stroke-dashoffset 1s linear}
 .count-num{font-size:22px;font-weight:900;color:var(--green)}
 
-/* ===== TOAST — FIXED: z-index 99999 ===== */
 .toast{position:fixed;z-index:99999;left:50%;bottom:92px;transform:translate(-50%,20px);
   width:max-content;max-width:90%;padding:14px 18px;border-radius:14px;
   background:linear-gradient(135deg,#0d1a15,#0b1411);
@@ -1008,14 +1007,64 @@ function applySettingsUI(){
   }
 }
 
-/* 7) NOTICE */
+/* 7) NOTICE — FIXED: পুরনো session আগে check */
 window.closeNotice = function(){
   $("noticeModal").classList.remove("show");
   setTimeout(async ()=>{
+    // ✅ STEP 1: পুরনো saved session আছে কিনা দেখো
+    const savedUid = localStorage.getItem("bdz_user_id");
+    
+    if(savedUid){
+      try{
+        const doc = await db.collection("users").doc(savedUid).get();
+        
+        if(doc.exists){
+          const u = doc.data();
+          
+          // ✅ Ban check
+          if(u.banned === true){
+            $("banText").textContent = "আপনার একাউন্ট পারমানেন্ট Ban করা হয়েছে। কারণ: " + (u.banReason || "নিয়ম ভঙ্গ");
+            $("authScreen").classList.add("hidden");
+            openModal("banModal");
+            return;
+          }
+          
+          // ✅ Telegram এ থাকলে chatId যোগ করো (যদি না থাকে)
+          if(isTelegramEnv()){
+            const tuser = getTelegramUser();
+            if(tuser && !u.chatId){
+              const updates = {
+                chatId: tuser.id,
+                telegramId: tuser.id,
+                telegramName: [tuser.first_name, tuser.last_name].filter(Boolean).join(" ") || tuser.username || "",
+                telegramUsername: tuser.username || "",
+                isTelegram: true,
+                lastLogin: new Date().toISOString()
+              };
+              await db.collection("users").doc(savedUid).update(updates);
+              Object.assign(u, updates);
+              console.log("✅ পুরনো account এ chatId save হয়েছে");
+            }
+          }
+          
+          // ✅ পুরনো account এ login করাও
+          startSession(savedUid, u);
+          return;
+        } else {
+          localStorage.removeItem("bdz_user_id");
+        }
+      }catch(e){
+        console.warn("Saved session check failed:", e);
+      }
+    }
+    
+    // ✅ STEP 2: Telegram auto-login চেষ্টা করো
     if(isTelegramEnv()){
       const ok = await telegramAutoLogin();
       if(ok) return;
     }
+    
+    // ✅ STEP 3: সাধারণ Login form দেখাও
     $("authScreen").classList.remove("hidden");
     if(isTelegramEnv()) $("tgBanner").classList.remove("hidden");
     checkSavedSession();
@@ -1068,7 +1117,6 @@ window.handleAuth = async function(){
       const devDup = await db.collection("users").where("deviceId","==",deviceId).get();
       if(!devDup.empty) return showAuthMsg("🚫 এই ডিভাইসে ইতিমধ্যে একটি একাউন্ট আছে!", "error");
 
-      // ✅ FIX: Telegram chatId save in signup
       const tgUserSignup = (typeof isTelegramEnv === "function" && isTelegramEnv()) ? getTelegramUser() : null;
       const newUser = {
         username, usernameLower: username.toLowerCase(), password,
@@ -1103,7 +1151,6 @@ window.handleAuth = async function(){
       return;
     }
 
-    // ✅ FIX: Telegram chatId update on login
     const tgUserLogin = (typeof isTelegramEnv === "function" && isTelegramEnv()) ? getTelegramUser() : null;
     const updateData = {
       lastLogin: new Date().toISOString(),
